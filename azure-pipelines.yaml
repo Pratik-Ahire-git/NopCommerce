@@ -1,0 +1,74 @@
+trigger:
+  - develop  # Trigger the pipeline on changes to the develop branch
+
+stages:
+  - stage: buildimage
+    displayName: Build Docker Image and Push
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      # Build and push Docker image to DockerHub
+      - job: buildnpush
+        displayName: Build and Push Docker Image
+        steps:
+          - task: Docker@2
+            inputs:
+              Dockerfile: "./Dockerfile"
+              command: buildAndPush
+              tags: latest
+              containerRegistry: My-DockerRegistry  # Ensure this service connection is set up in Azure DevOps
+              repository: pratik023/nopimagerepo
+
+  - stage: deployment
+    displayName: Create K8s and Deploy
+    pool: default
+    jobs:
+      - job: deploy
+        displayName: Provision Resources and Cluster 
+        steps:
+          # Create EKS Cluster in Ntier Network
+          - task: Bash@3
+            displayName: Create EKS Cluster
+            inputs:
+              targetType: 'inline'
+              workingDirectory: "./Deployments/terraform/AWS(EKS)-cluster"
+              script: |
+                terraform init -upgrade  # Initialize Terraform with upgrades
+                terraform apply -var-file="variables.tfvars" -auto-approve 
+          
+          # Configure the Cluster 
+          - task: Bash@3
+            displayName: Set Up Kubeconfig
+            inputs:
+              targetType: 'inline'
+              script: |
+                aws eks update-kubeconfig --name Nop_cluster --region ap-south-2 || exit 1 
+          
+          # Deploy the Kubernetes Resources
+          - task: Bash@3
+            displayName: Apply Kubernetes Manifests
+            inputs:
+              targetType: 'inline'
+              script: "kubectl apply -f ./Deployments/k8s"
+
+      - job: cleanup
+        displayName: Cleanup Resources and Delete Cluster
+        dependsOn: deploy  # Ensure this job runs after the deploy job
+        steps:
+          # Delete the Kubernetes Resources  
+          - task: Bash@3
+            displayName: Delete Kubernetes Resources
+            inputs:
+              targetType: 'inline'
+              script: |
+                kubectl delete -f ./Deployments/k8s || echo "No resources to delete."
+          
+          # Delete the Ntier Network and EKS Cluster
+          - task: Bash@3
+            displayName: Delete EKS Cluster
+            inputs:
+              targetType: 'inline'
+              workingDirectory: "./Deployments/terraform/AWS(EKS)-cluster"
+              script: |
+                terraform init -reconfigure  # Initialize Terraform with reconfiguration to ensure state is correct
+                terraform destroy -var-file="variables.tfvars" -auto-approve || exit 1  # Destroy resources without manual approval  

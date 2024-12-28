@@ -1,0 +1,46 @@
+---
+schedules:
+  - cron: '0 21 * * 1-5'
+    displayName: nightlyBuild
+    branches:
+      include:
+        - release
+
+
+stages:
+  - stage: build
+    jobs:
+      - job: build
+        pool:
+          vmImage: 'ubuntu-22.04'       
+        steps:
+          - task: DotNetCoreCLI@2
+            displayName: 'dotnet publish'
+            inputs:
+              command: 'publish'
+              publishWebProjects: false
+              projects: 'src/Presentation/Nop.Web/Nop.Web.csproj'
+              arguments: '-o $(Build.ArtifactStagingDirectory)/Output'
+              zipAfterPublish: true
+              modifyOutputPath: true
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: $(Build.ArtifactStagingDirectory)/Output
+              artifactName: NopOutputs 
+  - stage: deploy
+    dependsOn: build
+    jobs:
+      - job: systemtest
+        displayName: System Test Environment
+        pool: Default
+        steps:
+          - task: DownloadBuildArtifacts@1
+            inputs:
+              buildType: current
+              artifactName: NopOutputs
+              downloadPath: '$(System.ArtifactsDirectory)'
+          - bash: |
+              terraform init
+              terraform apply -auto-approve
+            workingDirectory: deploy/terraform/ec2-docker
+            displayName: Deploy application 

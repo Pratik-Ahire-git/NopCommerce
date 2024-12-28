@@ -1,0 +1,29 @@
+---
+trigger:
+  - develop
+
+stages:
+  - stage: deployment
+    displayName: Create k8s and deploy
+    pool: default
+    jobs:
+      - job: deploy
+        displayName: provision k8s cluster and deploy
+        steps:
+          - task: Bash@3
+            displayName: create EKS Cluster
+            inputs:
+              targetType: 'inline'
+              workingDirectory: "./Deployments/terraform/AWS(EKS)-cluster"
+              script: "terraform init && terraform apply -auto-approve"
+          - task: Bash@3
+            displayName: set up  kubeconfig
+            inputs:
+              targetType: 'inline'
+              script: |
+                aws eks update-kubeconfig --region us-east-1 --name ascode-cluster || exit 1 
+          - task: Bash@3
+            displayName: apply kubernetes manifests
+            inputs:
+              targetType: 'inline'
+              script: "kubectl apply -f ./Deployments/k8s"
